@@ -1,4 +1,4 @@
-use crate::Completion;
+use crate::{CachePolicy, Completion};
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::RwLock};
 
@@ -6,6 +6,9 @@ use std::{collections::HashMap, sync::RwLock};
 pub struct CacheEntry {
     pub completion: Completion,
     pub embedding: Option<Vec<f32>>,
+    /// Preserved with the response so a persistent semantic store can audit
+    /// the policy that permitted the original cache write.
+    pub policy: CachePolicy,
 }
 #[derive(Clone, Debug)]
 pub struct SemanticMatch {

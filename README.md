@@ -1,7 +1,8 @@
 <div align="center">
   <h1>Adaptive LLM Gateway</h1>
-  <p><strong>Route every prompt through the best model. See every decision.</strong></p>
+  <p><strong>Model-agnostic inference memory and intelligent LLM delegation.</strong></p>
   <p>
+    <a href="#architecture">Architecture</a> ·
     <a href="#try-the-demo">Try the demo</a> ·
     <a href="#run-a-real-hugging-face-model-locally">Run local inference</a> ·
     <a href="#use-it-as-an-sdk">Use the SDK</a>
@@ -16,7 +17,7 @@
 
 <br />
 
-> **One prompt in. A cheaper, observable inference decision out.** Adaptive LLM Gateway ranks providers by cost, falls back safely, caches repeated work, and tells you exactly what happened.
+> **One prompt in. The cheapest trustworthy answer out.** Adaptive LLM Gateway remembers inference across providers, delegates work to cheap specialists first, and escalates to frontier models only when a verifier says it must.
 
 ```
 your application or terminal
@@ -25,11 +26,54 @@ your application or terminal
 ┌───────────────────────────────────────────────────────────┐
 │                  ADAPTIVE LLM GATEWAY                      │
 │                                                           │
-│  exact cache ──► semantic cache ──► cost-aware router     │
-│       ↓                 ↓                   ↓             │
-│     $0 reply          close match      local → frontier   │
+│   L1 exact ──► L2 semantic ──► L3 prefix/KV reuse         │
+│    Redis          pgvector        provider runtime         │
+│      │               │                    │               │
+│      └──── no inference ────┐    fresh answer, less work  │
+│                              ▼                             │
+│          cheap specialist → verifier → frontier escalation │
 └───────────────────────────────────────────────────────────┘
 ```
+
+## Architecture
+
+The gateway is built around two connected systems: **a cost-aware delegation cascade** and **a provider-independent inference memory**.
+
+### 1. Delegate cheap work; reserve frontier reasoning
+
+Execution providers are ranked by cost. A cheap/local model drafts the answer first. An optional verifier accepts the draft or rejects it; only a rejection moves the request to the next, more capable route. The verifier can itself be a frontier model running a strict `APPROVE`/`REJECT` check.
+
+That makes the expensive model a selective judge and escalation path, not the default answer engine. The final response preserves every attempted provider, verifier decision, token count, latency hook, and dollar cost—including the cost of verification.
+
+### 2. A three-layer inference memory
+
+| Layer | Store | What is reused | Outcome |
+| --- | --- | --- | --- |
+| L1 — exact response | Redis | Canonical request → complete response | No model inference |
+| L2 — semantic response | PostgreSQL + pgvector | Safe, compatible near-match → response | No model inference |
+| L3 — prefix/KV | Local/provider runtime | Attention state for shared instructions/context | Fresh answer with less prefill work |
+
+L1 and L2 survive model changes because they store an answer contract, not provider-specific internal state. L3 cannot transfer between model architectures; it is intentionally reported as provider-native reuse rather than pretending every LLM shares the same KV cache.
+
+### 3. Cache correctness before cache hit rate
+
+An exact key is a versioned SHA-256 fingerprint of the prompt, system instructions, selected model, generation settings, tenant scope, and cache policy. A semantic hit is additionally gated by tenant scope, output/task compatibility key, expiry, and a caller-selected `SafeReadOnly` policy. Embeddings choose a semantic candidate—they never alter exact-cache identity.
+
+This means “similar” does not silently become “reusable.” User-specific, mutable, tool-using, structured, or high-stakes work can keep semantic reuse disabled while still benefiting from exact and provider-native prefix caching.
+
+For more implementation detail, see [the architecture notes](docs/architecture.md).
+
+## Persistent cache setup
+
+Enable both durable cache tiers in your application:
+
+```toml
+adaptive-llm-gateway = { version = "0.1", features = [
+  "openai-compatible", "redis-cache", "pgvector-cache"
+] }
+```
+
+`RedisExactCache` owns L1 keys with a namespace and TTL. `PgVectorSemanticCache` owns L2 embeddings and must be initialized through your normal database migration process using `PgVectorSemanticCache::SCHEMA_SQL`. Combine them with `TieredCache`; align its tenant scope and compatibility key with the request’s `cache_scope` and `cache_policy`.
 
 ## Try the demo
 
@@ -100,10 +144,10 @@ For a GPU server, point the same command at vLLM instead. vLLM serves Hugging Fa
 
 Apps usually start with one model and one API key. That is simple until cost, outages, and repeated requests matter. This gateway is a small layer between your application and the inference endpoints that makes the sensible default automatic:
 
-- **Route economically.** Compatible providers are ranked by configured token cost.
-- **Cache intelligently.** Identical prompts are exact hits; near-identical prompts can reuse a semantic match when an embedding is supplied.
-- **Fail gracefully.** A retryable provider failure moves to the next best route.
-- **Explain itself.** Every completion includes the candidates, attempts, token use, spend, and avoided cache cost.
+- **Delegate economically.** Cheap specialists draft; a verifier can escalate only the hard work.
+- **Remember inference.** Exact, semantic, and native-prefix layers eliminate or reduce repeated compute.
+- **Stay consistent across models.** Response reuse is protected by scopes, request contracts, compatibility policies, and expiry.
+- **Explain itself.** Every completion includes candidates, attempts, verifier decisions, token use, spend, and avoided cost.
 
 ## Use it as an SDK
 
@@ -158,21 +202,23 @@ Alongside the response text, the JSON includes `usage`, `cost`, and `route` so a
 
 For every prompt, the gateway:
 
-1. Checks the exact cache.
-2. Checks the semantic cache when an embedding is supplied.
-3. Ranks compatible providers by estimated input-token cost.
-4. Calls the best route, falling through only after retryable failures.
-5. Records the response for future exact and semantic lookups.
+1. Canonicalizes the complete request contract and checks L1 exact memory.
+2. Checks L2 semantic memory only if the caller explicitly permits safe approximate reuse.
+3. Ranks eligible execution providers by estimated cost.
+4. Lets the cheapest provider draft, then optionally verifies its answer.
+5. Escalates rejected drafts or retryable failures to the next provider.
+6. Records the final answer and its route/cost provenance for future reuse.
 
-`InMemoryCache` keeps the demo self-contained. The `Cache` trait is the production seam: Redis is a natural exact-cache implementation, while pgvector can implement similarity search with cosine distance. The gateway intentionally leaves embedding generation to the application so its privacy boundary and embedding model stay under your control.
+`InMemoryCache` keeps the demo self-contained. `RedisExactCache` and `PgVectorSemanticCache` provide the durable production tiers. The gateway intentionally leaves embedding generation to the application so its privacy boundary and embedding model stay under your control.
 
 ## Project status
 
 **Working now**
 
+- Delegation cascade with optional LLM judge and cost-accounted escalation
 - Explainable CLI walkthrough with fallback, token counts, costs, and cache savings
 - OpenAI-compatible local/hosted provider adapter
-- Exact cache and in-memory semantic cosine search
+- Redis L1 exact cache and pgvector L2 semantic cache
 - Cost-ordered routing with retryable fallback
 - Optional Axum API and structured tracing hooks
 

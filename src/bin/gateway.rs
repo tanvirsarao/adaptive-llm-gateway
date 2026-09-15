@@ -1,6 +1,6 @@
 use adaptive_llm_gateway::{
-    Completion, CompletionRequest, Gateway, GatewayConfig, InMemoryCache, LlmProvider,
-    OpenAiCompatibleProvider, ProviderCompletion, ProviderError, Usage,
+    CachePolicy, Completion, CompletionRequest, Gateway, GatewayConfig, InMemoryCache, LlmProvider,
+    OpenAiCompatibleProvider, ProviderCompletion, ProviderError, SemanticReuse, Usage,
 };
 use async_trait::async_trait;
 use clap::{Args, Parser, Subcommand};
@@ -127,7 +127,13 @@ async fn demo(prompt: String, local_fails: bool) -> Result<(), Box<dyn std::erro
         theme.brand("ADAPTIVE LLM GATEWAY"),
         theme.muted("· demo")
     );
-    let request = CompletionRequest::new(prompt.clone()).embedding(vec![0.12, -0.38, 0.91]);
+    let semantic_policy = CachePolicy {
+        compatibility_key: "demo:read-only:v1".into(),
+        semantic_reuse: SemanticReuse::SafeReadOnly,
+    };
+    let request = CompletionRequest::new(prompt.clone())
+        .embedding(vec![0.12, -0.38, 0.91])
+        .cache_policy(semantic_policy.clone());
     let first = gateway.complete(request.clone()).await?;
     print_completion("FIRST REQUEST", &first, theme);
     println!(
@@ -143,7 +149,8 @@ async fn demo(prompt: String, local_fails: bool) -> Result<(), Box<dyn std::erro
     let semantic = gateway
         .complete(
             CompletionRequest::new(format!("{prompt} Please keep it concise."))
-                .embedding(vec![0.12, -0.38, 0.91]),
+                .embedding(vec![0.12, -0.38, 0.91])
+                .cache_policy(semantic_policy),
         )
         .await?;
     print_completion("SEMANTIC REPLAY", &semantic, theme);

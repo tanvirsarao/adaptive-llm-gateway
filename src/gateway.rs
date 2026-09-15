@@ -1,12 +1,9 @@
 use crate::{
-    Cache, CacheEntry, Completion, CompletionRequest, CostSummary, GatewayError, LlmProvider,
-    ProviderAttempt, RouteCandidate, RouteTrace,
+    Cache, CacheEntry, Completion, CompletionRequest, CompletionVerifier, CostSummary,
+    GatewayError, LlmProvider, ProviderAttempt, RouteCandidate, RouteTrace, SemanticReuse,
 };
-use std::{
-    collections::hash_map::DefaultHasher,
-    hash::{Hash, Hasher},
-    sync::Arc,
-};
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -32,6 +29,7 @@ pub struct GatewayBuilder {
     config: GatewayConfig,
     providers: Vec<Arc<dyn LlmProvider>>,
     cache: Option<Arc<dyn Cache>>,
+    verifier: Option<Arc<dyn CompletionVerifier>>,
 }
 
 impl GatewayBuilder {
@@ -41,6 +39,11 @@ impl GatewayBuilder {
     }
     pub fn cache(mut self, cache: Arc<dyn Cache>) -> Self {
         self.cache = Some(cache);
+        self
+    }
+    /// Rejecting a draft makes the gateway continue to the next cost-ranked provider.
+    pub fn verifier(mut self, verifier: Arc<dyn CompletionVerifier>) -> Self {
+        self.verifier = Some(verifier);
         self
     }
     pub fn build(self) -> Result<Gateway, GatewayError> {
@@ -53,6 +56,7 @@ impl GatewayBuilder {
             config: self.config,
             providers: self.providers,
             cache: self.cache,
+            verifier: self.verifier,
         })
     }
 }
@@ -63,6 +67,7 @@ pub struct Gateway {
     config: GatewayConfig,
     providers: Vec<Arc<dyn LlmProvider>>,
     cache: Option<Arc<dyn Cache>>,
+    verifier: Option<Arc<dyn CompletionVerifier>>,
 }
 
 impl Gateway {
@@ -71,6 +76,7 @@ impl Gateway {
             config,
             providers: Vec::new(),
             cache: None,
+            verifier: None,
         }
     }
 
@@ -92,7 +98,9 @@ impl Gateway {
                 info!(cache = "exact", completion_id = %entry.completion.id, "gateway cache hit");
                 return Ok(entry.completion);
             }
-            if self.config.semantic_cache_enabled {
+            if self.config.semantic_cache_enabled
+                && request.cache_policy.semantic_reuse == SemanticReuse::SafeReadOnly
+            {
                 if let Some(embedding) = &request.embedding {
                     if let Some(mut hit) = cache
                         .find_similar(embedding, self.config.semantic_cache_threshold)
@@ -146,6 +154,7 @@ impl Gateway {
 
         let mut errors = Vec::new();
         let mut attempts = Vec::new();
+        let mut verification_cost = 0.0;
         for provider in candidates {
             match provider.complete(&request).await {
                 Ok(result) => {
@@ -153,6 +162,21 @@ impl Gateway {
                         * provider.input_cost_per_1k(&model).unwrap_or(0.0);
                     let output_usd = result.usage.completion_tokens as f64 / 1_000.0
                         * provider.output_cost_per_1k(&model).unwrap_or(0.0);
+                    if let Some(verifier) = &self.verifier {
+                        let verification = verifier.verify(&request, &result.text).await;
+                        verification_cost += verification.cost.total_usd;
+                        attempts.push(ProviderAttempt {
+                            provider: verification.provider,
+                            outcome: format!("verification: {}", verification.reason),
+                        });
+                        if !verification.approved {
+                            attempts.push(ProviderAttempt {
+                                provider: provider.name().into(),
+                                outcome: "draft rejected; escalating".into(),
+                            });
+                            continue;
+                        }
+                    }
                     attempts.push(ProviderAttempt {
                         provider: provider.name().into(),
                         outcome: "selected".into(),
@@ -168,7 +192,8 @@ impl Gateway {
                         cost: CostSummary {
                             input_usd,
                             output_usd,
-                            total_usd: input_usd + output_usd,
+                            verification_usd: verification_cost,
+                            total_usd: input_usd + output_usd + verification_cost,
                             avoided_usd: 0.0,
                         },
                         route: RouteTrace {
@@ -185,6 +210,7 @@ impl Gateway {
                                 CacheEntry {
                                     completion: completion.clone(),
                                     embedding: request.embedding.clone(),
+                                    policy: request.cache_policy.clone(),
                                 },
                             )
                             .await
@@ -215,10 +241,31 @@ impl Gateway {
 }
 
 fn cache_key(request: &CompletionRequest) -> String {
-    let mut hasher = DefaultHasher::new();
-    request.prompt.hash(&mut hasher);
-    request.model.hash(&mut hasher);
-    request.max_tokens.hash(&mut hasher);
-    request.temperature.map(f32::to_bits).hash(&mut hasher);
-    format!("v1:{:x}", hasher.finish())
+    #[derive(serde::Serialize)]
+    struct CanonicalRequest<'a> {
+        cache_schema: &'static str,
+        prompt: String,
+        system: Option<String>,
+        model: &'a Option<String>,
+        max_tokens: &'a Option<u32>,
+        temperature_bits: Option<u32>,
+        cache_scope: &'a str,
+        policy: &'a crate::CachePolicy,
+    }
+    let canonical = CanonicalRequest {
+        cache_schema: "request:v2",
+        prompt: request.prompt.replace("\r\n", "\n"),
+        system: request
+            .system
+            .as_ref()
+            .map(|value| value.replace("\r\n", "\n")),
+        model: &request.model,
+        max_tokens: &request.max_tokens,
+        temperature_bits: request.temperature.map(f32::to_bits),
+        cache_scope: &request.cache_scope,
+        policy: &request.cache_policy,
+    };
+    let bytes = serde_json::to_vec(&canonical).expect("canonical cache request serializes");
+    let digest = Sha256::digest(bytes);
+    format!("v2:{digest:x}")
 }

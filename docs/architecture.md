@@ -34,6 +34,8 @@ Every durable cache key/entry must carry:
 - freshness TTL and invalidation tags;
 - a semantic compatibility policy and minimum similarity threshold.
 
+The current canonical request fingerprint is SHA-256 over cache-schema version, line-ending-normalized prompt and system instructions, selected model, generation settings, tenant scope, and cache policy. Embeddings are intentionally excluded: they choose the approximate L2 lookup but must not make otherwise identical L1 requests miss.
+
 Semantic reuse must not blindly return an answer because two strings are nearby. It needs an allowlist of safe task classes, compatible output schema/tools, tenant isolation, freshness validation, and optionally a cheap verifier before serving the hit.
 
 ## Persistence stack

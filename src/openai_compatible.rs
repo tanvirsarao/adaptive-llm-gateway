@@ -68,6 +68,17 @@ impl LlmProvider for OpenAiCompatibleProvider {
         &self,
         request: &CompletionRequest,
     ) -> Result<ProviderCompletion, ProviderError> {
+        let mut messages = Vec::new();
+        if let Some(system) = &request.system {
+            messages.push(Message {
+                role: "system",
+                content: system,
+            });
+        }
+        messages.push(Message {
+            role: "user",
+            content: &request.prompt,
+        });
         let body = ChatRequest {
             model: request.model.clone().unwrap_or_else(|| {
                 self.models
@@ -75,10 +86,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
                     .cloned()
                     .unwrap_or_else(|| "default".into())
             }),
-            messages: vec![Message {
-                role: "user",
-                content: &request.prompt,
-            }],
+            messages,
             max_tokens: request.max_tokens,
             temperature: request.temperature,
         };

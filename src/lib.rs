@@ -22,6 +22,7 @@ mod provider;
 #[cfg(feature = "redis-cache")]
 mod redis_cache;
 mod types;
+mod verifier;
 
 pub use cache::{Cache, CacheEntry, InMemoryCache, SemanticMatch, TieredCache};
 pub use gateway::{Gateway, GatewayBuilder, GatewayConfig};
@@ -33,6 +34,7 @@ pub use provider::{LlmProvider, ProviderCompletion, ProviderError};
 #[cfg(feature = "redis-cache")]
 pub use redis_cache::RedisExactCache;
 pub use types::{
-    Completion, CompletionRequest, CostSummary, GatewayError, ProviderAttempt, RouteCandidate,
-    RouteTrace, Usage,
+    CachePolicy, Completion, CompletionRequest, CostSummary, GatewayError, ProviderAttempt,
+    RouteCandidate, RouteTrace, SemanticReuse, Usage,
 };
+pub use verifier::{CompletionVerifier, LlmJudgeVerifier, Verification};

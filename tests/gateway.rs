@@ -1,6 +1,6 @@
 use adaptive_llm_gateway::{
-    CompletionRequest, Gateway, GatewayConfig, InMemoryCache, LlmProvider, ProviderCompletion,
-    ProviderError, Usage,
+    CompletionRequest, CompletionVerifier, CostSummary, Gateway, GatewayConfig, InMemoryCache,
+    LlmProvider, ProviderCompletion, ProviderError, Usage, Verification,
 };
 use async_trait::async_trait;
 use std::sync::{
@@ -12,6 +12,28 @@ struct Fake {
     calls: AtomicUsize,
     name: String,
     cost: f64,
+}
+
+struct RejectCheap;
+#[async_trait]
+impl CompletionVerifier for RejectCheap {
+    async fn verify(&self, _: &CompletionRequest, answer: &str) -> Verification {
+        Verification {
+            approved: answer == "frontier",
+            provider: "judge".into(),
+            reason: if answer == "frontier" {
+                "APPROVE"
+            } else {
+                "REJECT"
+            }
+            .into(),
+            cost: CostSummary {
+                verification_usd: 0.01,
+                total_usd: 0.01,
+                ..Default::default()
+            },
+        }
+    }
 }
 #[async_trait]
 impl LlmProvider for Fake {
@@ -89,4 +111,35 @@ async fn selects_the_lower_cost_provider() {
         "cheap"
     );
     assert_eq!(expensive.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn rejected_cheap_draft_escalates_and_keeps_verification_cost() {
+    let cheap = Arc::new(Fake {
+        calls: AtomicUsize::new(0),
+        name: "cheap".into(),
+        cost: 0.1,
+    });
+    let frontier = Arc::new(Fake {
+        calls: AtomicUsize::new(0),
+        name: "frontier".into(),
+        cost: 2.0,
+    });
+    let gateway = Gateway::builder(GatewayConfig::default())
+        .provider(cheap)
+        .provider(frontier)
+        .verifier(Arc::new(RejectCheap))
+        .build()
+        .unwrap();
+    let response = gateway
+        .complete(CompletionRequest::new("hello".into()))
+        .await
+        .unwrap();
+    assert_eq!(response.provider, "frontier");
+    assert_eq!(response.cost.verification_usd, 0.02);
+    assert!(response
+        .route
+        .attempts
+        .iter()
+        .any(|attempt| attempt.outcome == "draft rejected; escalating"));
 }

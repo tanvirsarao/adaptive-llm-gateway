@@ -5,21 +5,39 @@ use uuid::Uuid;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CompletionRequest {
     pub prompt: String,
+    /// Instructions that change the meaning of a prompt and must be part of
+    /// the cache fingerprint and provider request.
+    #[serde(default)]
+    pub system: Option<String>,
     pub model: Option<String>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     /// Supplies a precomputed embedding when semantic caching is enabled.
     pub embedding: Option<Vec<f32>>,
+    /// Isolation boundary for cache ownership (usually a tenant or user ID).
+    #[serde(default = "default_cache_scope")]
+    pub cache_scope: String,
+    /// Declares whether an approximate answer may be reused and under what
+    /// output contract. This is part of cache identity.
+    #[serde(default)]
+    pub cache_policy: CachePolicy,
+}
+
+fn default_cache_scope() -> String {
+    "default".into()
 }
 
 impl CompletionRequest {
     pub fn new(prompt: String) -> Self {
         Self {
             prompt,
+            system: None,
             model: None,
             max_tokens: None,
             temperature: None,
             embedding: None,
+            cache_scope: default_cache_scope(),
+            cache_policy: CachePolicy::default(),
         }
     }
 
@@ -30,6 +48,46 @@ impl CompletionRequest {
     pub fn embedding(mut self, embedding: Vec<f32>) -> Self {
         self.embedding = Some(embedding);
         self
+    }
+    pub fn system(mut self, system: impl Into<String>) -> Self {
+        self.system = Some(system.into());
+        self
+    }
+    pub fn cache_scope(mut self, scope: impl Into<String>) -> Self {
+        self.cache_scope = scope.into();
+        self
+    }
+    pub fn cache_policy(mut self, policy: CachePolicy) -> Self {
+        self.cache_policy = policy;
+        self
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SemanticReuse {
+    /// An answer is never reused for an approximate request.
+    Disabled,
+    /// Safe for read-only, non-user-specific work such as summarization or
+    /// classification. The caller owns the suitability decision.
+    SafeReadOnly,
+    /// Reserved for a future cheap verifier before serving an approximate hit.
+    VerifyBeforeUse,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CachePolicy {
+    /// Identifies the expected task/output contract, e.g. `summary:v1` or
+    /// `sentiment-json:v2`. Different contracts never share semantic hits.
+    pub compatibility_key: String,
+    pub semantic_reuse: SemanticReuse,
+}
+
+impl Default for CachePolicy {
+    fn default() -> Self {
+        Self {
+            compatibility_key: "text-generation:v1".into(),
+            semantic_reuse: SemanticReuse::Disabled,
+        }
     }
 }
 
@@ -58,6 +116,8 @@ pub struct Completion {
 pub struct CostSummary {
     pub input_usd: f64,
     pub output_usd: f64,
+    /// Spend incurred by verifier/planner models during delegation.
+    pub verification_usd: f64,
     pub total_usd: f64,
     /// The provider cost not paid because this response came from cache.
     pub avoided_usd: f64,
