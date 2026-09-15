@@ -17,10 +17,16 @@ name = "adaptive-llm-gateway"
 path = "src/main.rs"
 required-features = ["server"]
 
+[[bin]]
+name = "gateway"
+path = "src/bin/gateway.rs"
+required-features = ["cli"]
+
 [features]
 default = []
 server = ["dep:axum", "dep:tokio", "dep:tracing-subscriber"]
 openai-compatible = ["dep:reqwest"]
+cli = ["dep:clap", "dep:tokio", "openai-compatible"]
 
 [dependencies]
 async-trait = "0.1"
@@ -33,6 +39,7 @@ axum = { version = "0.8", optional = true, features = ["json"] }
 tokio = { version = "1", optional = true, features = ["macros", "rt-multi-thread", "net"] }
 tracing-subscriber = { version = "0.3", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"], optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
