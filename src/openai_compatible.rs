@@ -12,6 +12,7 @@ pub struct OpenAiCompatibleProvider {
     api_key: Option<String>,
     models: Vec<String>,
     input_cost_per_1k: f64,
+    output_cost_per_1k: f64,
     client: reqwest::Client,
 }
 
@@ -25,6 +26,7 @@ impl OpenAiCompatibleProvider {
             api_key: None,
             models,
             input_cost_per_1k: 0.0,
+            output_cost_per_1k: 0.0,
             client: reqwest::Client::new(),
         }
     }
@@ -40,6 +42,11 @@ impl OpenAiCompatibleProvider {
         self.input_cost_per_1k = cost;
         self
     }
+
+    pub fn output_cost_per_1k(mut self, cost: f64) -> Self {
+        self.output_cost_per_1k = cost;
+        self
+    }
 }
 
 #[async_trait]
@@ -52,6 +59,9 @@ impl LlmProvider for OpenAiCompatibleProvider {
     }
     fn input_cost_per_1k(&self, _: &str) -> Option<f64> {
         Some(self.input_cost_per_1k)
+    }
+    fn output_cost_per_1k(&self, _: &str) -> Option<f64> {
+        Some(self.output_cost_per_1k)
     }
 
     async fn complete(

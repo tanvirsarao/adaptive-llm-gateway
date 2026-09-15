@@ -24,4 +24,7 @@ pub use gateway::{Gateway, GatewayBuilder, GatewayConfig};
 #[cfg(feature = "openai-compatible")]
 pub use openai_compatible::OpenAiCompatibleProvider;
 pub use provider::{LlmProvider, ProviderCompletion, ProviderError};
-pub use types::{Completion, CompletionRequest, GatewayError, Usage};
+pub use types::{
+    Completion, CompletionRequest, CostSummary, GatewayError, ProviderAttempt, RouteCandidate,
+    RouteTrace, Usage,
+};

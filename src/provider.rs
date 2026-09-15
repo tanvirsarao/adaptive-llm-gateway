@@ -24,6 +24,10 @@ pub trait LlmProvider: Send + Sync {
     fn models(&self) -> &[String];
     /// Estimated USD per 1K input tokens. Used only for routing.
     fn input_cost_per_1k(&self, model: &str) -> Option<f64>;
+    /// Estimated USD per 1K output tokens. Used for request-cost reporting.
+    fn output_cost_per_1k(&self, _model: &str) -> Option<f64> {
+        None
+    }
     async fn complete(
         &self,
         request: &CompletionRequest,

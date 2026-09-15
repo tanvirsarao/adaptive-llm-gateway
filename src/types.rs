@@ -48,6 +48,43 @@ pub struct Completion {
     pub usage: Usage,
     pub cached: bool,
     pub cache_kind: Option<String>,
+    /// What this request cost at the selected provider, in USD.
+    pub cost: CostSummary,
+    /// Decision data for displaying or exporting the route the gateway took.
+    pub route: RouteTrace,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CostSummary {
+    pub input_usd: f64,
+    pub output_usd: f64,
+    pub total_usd: f64,
+    /// The provider cost not paid because this response came from cache.
+    pub avoided_usd: f64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RouteTrace {
+    /// `miss`, `exact`, or `semantic`.
+    pub cache: String,
+    /// Cost-ranked provider options considered for this request.
+    pub candidates: Vec<RouteCandidate>,
+    /// Providers called in order; a cached response has no attempts.
+    pub attempts: Vec<ProviderAttempt>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RouteCandidate {
+    pub provider: String,
+    pub model: String,
+    pub input_cost_per_1k_usd: f64,
+    pub output_cost_per_1k_usd: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ProviderAttempt {
+    pub provider: String,
+    pub outcome: String,
 }
 
 #[derive(Debug, Error)]
