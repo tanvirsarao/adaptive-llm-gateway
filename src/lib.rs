@@ -14,14 +14,14 @@
 
 mod cache;
 mod gateway;
-mod provider;
-mod types;
 #[cfg(feature = "openai-compatible")]
 mod openai_compatible;
+mod provider;
+mod types;
 
 pub use cache::{Cache, CacheEntry, InMemoryCache, SemanticMatch};
 pub use gateway::{Gateway, GatewayBuilder, GatewayConfig};
-pub use provider::{LlmProvider, ProviderCompletion, ProviderError};
-pub use types::{Completion, CompletionRequest, GatewayError, Usage};
 #[cfg(feature = "openai-compatible")]
 pub use openai_compatible::OpenAiCompatibleProvider;
+pub use provider::{LlmProvider, ProviderCompletion, ProviderError};
+pub use types::{Completion, CompletionRequest, GatewayError, Usage};

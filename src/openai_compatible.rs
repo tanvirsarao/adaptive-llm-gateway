@@ -18,11 +18,7 @@ pub struct OpenAiCompatibleProvider {
 impl OpenAiCompatibleProvider {
     /// `base_url` should include the API version, for example
     /// `http://127.0.0.1:8000/v1` for a local vLLM server.
-    pub fn new(
-        name: impl Into<String>,
-        base_url: impl Into<String>,
-        models: Vec<String>,
-    ) -> Self {
+    pub fn new(name: impl Into<String>, base_url: impl Into<String>, models: Vec<String>) -> Self {
         Self {
             name: name.into(),
             base_url: base_url.into().trim_end_matches('/').into(),
@@ -48,28 +44,74 @@ impl OpenAiCompatibleProvider {
 
 #[async_trait]
 impl LlmProvider for OpenAiCompatibleProvider {
-    fn name(&self) -> &str { &self.name }
-    fn models(&self) -> &[String] { &self.models }
-    fn input_cost_per_1k(&self, _: &str) -> Option<f64> { Some(self.input_cost_per_1k) }
+    fn name(&self) -> &str {
+        &self.name
+    }
+    fn models(&self) -> &[String] {
+        &self.models
+    }
+    fn input_cost_per_1k(&self, _: &str) -> Option<f64> {
+        Some(self.input_cost_per_1k)
+    }
 
-    async fn complete(&self, request: &CompletionRequest) -> Result<ProviderCompletion, ProviderError> {
+    async fn complete(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<ProviderCompletion, ProviderError> {
         let body = ChatRequest {
-            model: request.model.clone().unwrap_or_else(|| self.models.first().cloned().unwrap_or_else(|| "default".into())),
-            messages: vec![Message { role: "user", content: &request.prompt }],
+            model: request.model.clone().unwrap_or_else(|| {
+                self.models
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "default".into())
+            }),
+            messages: vec![Message {
+                role: "user",
+                content: &request.prompt,
+            }],
             max_tokens: request.max_tokens,
             temperature: request.temperature,
         };
-        let mut call = self.client.post(format!("{}/chat/completions", self.base_url)).json(&body);
-        if let Some(api_key) = &self.api_key { call = call.bearer_auth(api_key); }
-        let response = call.send().await.map_err(|error| ProviderError { message: error.to_string(), retryable: error.is_timeout() || error.is_connect() })?;
+        let mut call = self
+            .client
+            .post(format!("{}/chat/completions", self.base_url))
+            .json(&body);
+        if let Some(api_key) = &self.api_key {
+            call = call.bearer_auth(api_key);
+        }
+        let response = call.send().await.map_err(|error| ProviderError {
+            message: error.to_string(),
+            retryable: error.is_timeout() || error.is_connect(),
+        })?;
         let status = response.status();
         if !status.is_success() {
-            let message = response.text().await.unwrap_or_else(|_| "unable to read provider error".into());
-            return Err(ProviderError { message: format!("HTTP {status}: {message}"), retryable: status.as_u16() == 429 || status.is_server_error() });
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "unable to read provider error".into());
+            return Err(ProviderError {
+                message: format!("HTTP {status}: {message}"),
+                retryable: status.as_u16() == 429 || status.is_server_error(),
+            });
         }
-        let parsed: ChatResponse = response.json().await.map_err(|error| ProviderError { message: format!("invalid provider response: {error}"), retryable: false })?;
-        let text = parsed.choices.into_iter().next().and_then(|choice| choice.message.content).ok_or_else(|| ProviderError { message: "provider response had no text choice".into(), retryable: false })?;
-        Ok(ProviderCompletion { text, model: parsed.model, usage: parsed.usage.unwrap_or_default().into() })
+        let parsed: ChatResponse = response.json().await.map_err(|error| ProviderError {
+            message: format!("invalid provider response: {error}"),
+            retryable: false,
+        })?;
+        let text = parsed
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|choice| choice.message.content)
+            .ok_or_else(|| ProviderError {
+                message: "provider response had no text choice".into(),
+                retryable: false,
+            })?;
+        Ok(ProviderCompletion {
+            text,
+            model: parsed.model,
+            usage: parsed.usage.unwrap_or_default().into(),
+        })
     }
 }
 
@@ -83,13 +125,34 @@ struct ChatRequest<'a> {
     temperature: Option<f32>,
 }
 #[derive(Serialize)]
-struct Message<'a> { role: &'static str, content: &'a str }
+struct Message<'a> {
+    role: &'static str,
+    content: &'a str,
+}
 #[derive(Deserialize)]
-struct ChatResponse { model: String, choices: Vec<Choice>, usage: Option<ResponseUsage> }
+struct ChatResponse {
+    model: String,
+    choices: Vec<Choice>,
+    usage: Option<ResponseUsage>,
+}
 #[derive(Deserialize)]
-struct Choice { message: ResponseMessage }
+struct Choice {
+    message: ResponseMessage,
+}
 #[derive(Deserialize)]
-struct ResponseMessage { content: Option<String> }
+struct ResponseMessage {
+    content: Option<String>,
+}
 #[derive(Default, Deserialize)]
-struct ResponseUsage { prompt_tokens: u32, completion_tokens: u32 }
-impl From<ResponseUsage> for Usage { fn from(value: ResponseUsage) -> Self { Self { prompt_tokens: value.prompt_tokens, completion_tokens: value.completion_tokens } } }
+struct ResponseUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+}
+impl From<ResponseUsage> for Usage {
+    fn from(value: ResponseUsage) -> Self {
+        Self {
+            prompt_tokens: value.prompt_tokens,
+            completion_tokens: value.completion_tokens,
+        }
+    }
+}
