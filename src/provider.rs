@@ -11,7 +11,10 @@ pub struct ProviderCompletion {
 
 #[derive(Debug, Error)]
 #[error("{message}")]
-pub struct ProviderError { pub message: String, pub retryable: bool }
+pub struct ProviderError {
+    pub message: String,
+    pub retryable: bool,
+}
 
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
@@ -21,5 +24,8 @@ pub trait LlmProvider: Send + Sync {
     fn models(&self) -> &[String];
     /// Estimated USD per 1K input tokens. Used only for routing.
     fn input_cost_per_1k(&self, model: &str) -> Option<f64>;
-    async fn complete(&self, request: &CompletionRequest) -> Result<ProviderCompletion, ProviderError>;
+    async fn complete(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<ProviderCompletion, ProviderError>;
 }

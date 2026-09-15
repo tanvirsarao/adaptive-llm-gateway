@@ -14,15 +14,30 @@ pub struct CompletionRequest {
 
 impl CompletionRequest {
     pub fn new(prompt: String) -> Self {
-        Self { prompt, model: None, max_tokens: None, temperature: None, embedding: None }
+        Self {
+            prompt,
+            model: None,
+            max_tokens: None,
+            temperature: None,
+            embedding: None,
+        }
     }
 
-    pub fn model(mut self, model: impl Into<String>) -> Self { self.model = Some(model.into()); self }
-    pub fn embedding(mut self, embedding: Vec<f32>) -> Self { self.embedding = Some(embedding); self }
+    pub fn model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+    pub fn embedding(mut self, embedding: Vec<f32>) -> Self {
+        self.embedding = Some(embedding);
+        self
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Usage { pub prompt_tokens: u32, pub completion_tokens: u32 }
+pub struct Usage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Completion {
