@@ -38,4 +38,4 @@ Semantic reuse must not blindly return an answer because two strings are nearby.
 
 ## Persistence stack
 
-`RedisExactCache` is the durable L1 implementation. It stores versioned, namespaced serialized response entries with a TTL. `TieredCache` fans writes to an exact tier and semantic tier and reads from the appropriate one. The next implementation is a pgvector L2 cache that stores the embedding and provenance/compatibility metadata alongside the response.
+`RedisExactCache` is the durable L1 implementation. It stores versioned, namespaced serialized response entries with a TTL. `PgVectorSemanticCache` is the durable L2 implementation: it stores response provenance and an embedding in PostgreSQL, applies TTL expiry, filters by tenant scope and semantic compatibility key, then ranks eligible rows with pgvector cosine distance. `TieredCache` fans writes to both tiers and reads from the appropriate one.

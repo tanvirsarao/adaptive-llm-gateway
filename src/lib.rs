@@ -16,6 +16,8 @@ mod cache;
 mod gateway;
 #[cfg(feature = "openai-compatible")]
 mod openai_compatible;
+#[cfg(feature = "pgvector-cache")]
+mod pgvector_cache;
 mod provider;
 #[cfg(feature = "redis-cache")]
 mod redis_cache;
@@ -25,6 +27,8 @@ pub use cache::{Cache, CacheEntry, InMemoryCache, SemanticMatch, TieredCache};
 pub use gateway::{Gateway, GatewayBuilder, GatewayConfig};
 #[cfg(feature = "openai-compatible")]
 pub use openai_compatible::OpenAiCompatibleProvider;
+#[cfg(feature = "pgvector-cache")]
+pub use pgvector_cache::PgVectorSemanticCache;
 pub use provider::{LlmProvider, ProviderCompletion, ProviderError};
 #[cfg(feature = "redis-cache")]
 pub use redis_cache::RedisExactCache;
