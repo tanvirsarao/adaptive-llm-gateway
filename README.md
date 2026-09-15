@@ -1,174 +1,192 @@
 <div align="center">
   <h1>Adaptive LLM Gateway</h1>
-  <p><strong>A tiny Rust control plane for cheaper, faster, provider-agnostic LLM inference.</strong></p>
-  <p><a href="#try-it-in-60-seconds">Try it</a> · <a href="#how-it-works">How it works</a> · <a href="#use-it-as-an-sdk">Rust SDK</a> · <a href="#roadmap">Roadmap</a></p>
+  <p><strong>Route every prompt through the best model. See every decision.</strong></p>
+  <p>
+    <a href="#try-the-demo">Try the demo</a> ·
+    <a href="#run-a-real-hugging-face-model-locally">Run local inference</a> ·
+    <a href="#use-it-as-an-sdk">Use the SDK</a>
+  </p>
   <p>
     <img src="https://img.shields.io/badge/Rust-1.82%2B-DEA584?logo=rust&logoColor=white" alt="Rust 1.82+" />
-    <img src="https://img.shields.io/badge/API-Axum-7A3E9D" alt="Axum API" />
+    <img src="https://img.shields.io/badge/CLI-explainable%20routing-7A3E9D" alt="Explainable CLI" />
     <img src="https://img.shields.io/badge/Cache-exact%20%2B%20semantic-00BFA6" alt="Exact and semantic caching" />
-    <img src="https://img.shields.io/badge/License-MIT-4C1" alt="MIT License" />
+    <img src="https://img.shields.io/badge/Local%20models-Hugging%20Face-FFD21E?logo=huggingface&logoColor=black" alt="Hugging Face local models" />
   </p>
 </div>
 
 <br />
 
-> **The idea:** your application makes one LLM call. The gateway picks the lowest-cost capable provider, falls back when needed, and never pays twice for work it has already seen.
+> **One prompt in. A cheaper, observable inference decision out.** Adaptive LLM Gateway ranks providers by cost, falls back safely, caches repeated work, and tells you exactly what happened.
 
 ```
-your app
-   │  POST /v1/chat/completions
-   ▼
-┌──────────────────────────────────────────────────────────────┐
-│                    ADAPTIVE LLM GATEWAY                       │
-│                                                              │
-│   exact cache ──► semantic cache ──► cost-aware router       │
-│      Redis             pgvector          ↓                  │
-└─────────────────────────────────────────┼────────────────────┘
-                                          ▼
-                            OpenAI · Anthropic · local models
+your application or terminal
+            │
+            ▼
+┌───────────────────────────────────────────────────────────┐
+│                  ADAPTIVE LLM GATEWAY                      │
+│                                                           │
+│  exact cache ──► semantic cache ──► cost-aware router     │
+│       ↓                 ↓                   ↓             │
+│     $0 reply          close match      local → frontier   │
+└───────────────────────────────────────────────────────────┘
 ```
 
-## Why this exists
+## Try the demo
 
-Most apps begin with a single model and a single API key. That is wonderfully simple—until cost, outages, and repeated requests start to matter. Adaptive LLM Gateway is an intentionally small layer between your app and model providers. Its job is to make the sensible default automatic:
-
-- **Route economically.** Select the compatible provider with the lowest configured token cost.
-- **Cache intelligently.** Identical requests are exact hits; near-identical requests can be served by a semantic cache when you provide embeddings.
-- **Fail gracefully.** Retryable provider failures fall through to the next best route.
-- **Stay portable.** Embed it as a Rust SDK today or expose the same gateway behind an HTTP API.
-
-## Try it in 60 seconds
-
-The demo ships with a local provider. It requires **no API key, Redis, Postgres, or model download**.
+No model download. No API key. No Redis or Postgres. The demo intentionally makes the free local route unavailable, so you can see a paid fallback, its token cost, and then a cache replay that costs nothing.
 
 ```bash
 git clone https://github.com/tanvirsarao/adaptive-llm-gateway.git
 cd adaptive-llm-gateway
-cargo run --features server
+cargo run --features cli --bin gateway -- demo \
+  "Explain cache invalidation in six words." \
+  --simulate-local-failure
 ```
 
-In a second terminal, make the same request twice:
+The CLI is the product demo—not a hidden debug log:
 
-```bash
-curl -s http://127.0.0.1:3000/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{"prompt":"Explain cache invalidation in six words."}' | jq
+```text
+  ADAPTIVE LLM GATEWAY  ·  demo
+
+  ── FIRST REQUEST ─────────────────────────────────────
+  Cache     MISS
+  Routes
+    1. local-qwen             default   in $0.0000/1K · out $0.0000/1K
+    2. frontier-fallback      default   in $0.5000/1K · out $3.0000/1K
+  Attempt   local-qwen → retryable failure: simulated local endpoint unavailable
+  Attempt   frontier-fallback → selected
+  Response  Demo answer: Explain cache invalidation in six words.
+  Tokens    6 input · 18 output
+  Cost      $0.057000 this request
+
+  Replaying the same request to show the cache…
+
+  ── REPLAY ────────────────────────────────────────────
+  Cache     EXACT
+  Tokens    6 input · 18 output
+  Cost      $0.000000 this request
+  Saved     $0.057000 via exact cache
 ```
 
-First response:
+Run without `--simulate-local-failure` to see the gateway keep the request on the no-cost local route. The CLI shows candidate routes, the selected provider, failures/fallbacks, token counts, spend, and cache savings for every request.
 
-```json
-{
-  "text": "Demo answer: Explain cache invalidation in six words.",
-  "provider": "local-demo",
-  "cached": false,
-  "cache_kind": null
-}
-```
+## Run a real Hugging Face model locally
 
-Run it once more. The gateway returns the response without calling a provider:
+The gateway speaks the OpenAI-compatible chat API, so it works with vLLM, LM Studio, and llama.cpp. For the shortest cross-platform path, use llama.cpp: it can download a quantized GGUF model directly from Hugging Face and expose a local API. The [llama.cpp quick start](https://github.com/ggml-org/llama.cpp#quick-start) documents the `llama serve -hf …` workflow and its OpenAI-compatible server.
 
-```json
-{
-  "provider": "local-demo",
-  "cached": true,
-  "cache_kind": "exact"
-}
-```
+1. Install a current llama.cpp build (prebuilt release or source build) so the `llama` command is available.
 
-Try a semantic-cache lookup by including an embedding. Two requests with close vectors reuse the first answer once their cosine similarity reaches the configured threshold (default: `0.96`).
+2. In one terminal, download and serve a compact Hugging Face model. The first launch downloads it; later launches use the local cache.
+
+   ```bash
+   llama serve -hf ggml-org/Qwen3.5-0.8B-GGUF --alias local-qwen
+   ```
+
+3. In this repository, ask the gateway to use it:
+
+   ```bash
+   cargo run --features cli --bin gateway -- prompt \
+     "Give me three names for a coffee shop for night owls." \
+     --endpoint http://127.0.0.1:8080/v1 \
+     --model local-qwen \
+     --replay
+   ```
+
+`--replay` sends the same prompt again in the same gateway process, making the exact-cache hit visible. A local model defaults to `$0.00` pricing. If you are routing to a paid OpenAI-compatible endpoint, add `--input-cost-per-1k` and `--output-cost-per-1k` to have the CLI calculate actual request spend.
+
+For a GPU server, point the same command at vLLM instead. vLLM serves Hugging Face model IDs behind `/v1/chat/completions`; see its [OpenAI-compatible server documentation](https://docs.vllm.ai/en/latest/serving/online_serving/openai_compatible_server/).
+
+## Why this exists
+
+Apps usually start with one model and one API key. That is simple until cost, outages, and repeated requests matter. This gateway is a small layer between your application and the inference endpoints that makes the sensible default automatic:
+
+- **Route economically.** Compatible providers are ranked by configured token cost.
+- **Cache intelligently.** Identical prompts are exact hits; near-identical prompts can reuse a semantic match when an embedding is supplied.
+- **Fail gracefully.** A retryable provider failure moves to the next best route.
+- **Explain itself.** Every completion includes the candidates, attempts, token use, spend, and avoided cache cost.
 
 ## Use it as an SDK
 
-The HTTP server is only a wrapper. The primary interface is an embeddable Rust gateway, which makes it easy to keep routing close to your application code.
+The CLI and HTTP API are thin clients over the same Rust gateway. Embed it when you want routing close to your application.
 
 ```rust
 use std::sync::Arc;
-use adaptive_llm_gateway::{CompletionRequest, Gateway, GatewayConfig, InMemoryCache};
+use adaptive_llm_gateway::{
+    CompletionRequest, Gateway, GatewayConfig, InMemoryCache, OpenAiCompatibleProvider,
+};
 
 # async fn example() -> Result<(), adaptive_llm_gateway::GatewayError> {
+let local_qwen = OpenAiCompatibleProvider::new(
+    "local-qwen",
+    "http://127.0.0.1:8080/v1",
+    vec!["local-qwen".into()],
+);
+
 let gateway = Gateway::builder(GatewayConfig::default())
     .cache(Arc::new(InMemoryCache::default()))
-    .provider(Arc::new(my_openai_provider))
-    .provider(Arc::new(my_local_model_provider))
+    .provider(Arc::new(local_qwen))
     .build()?;
 
 let answer = gateway
-    .complete(
-        CompletionRequest::new("Summarize this support ticket".into())
-            .model("default")
-            .embedding(ticket_embedding),
-    )
+    .complete(CompletionRequest::new("Summarize this support ticket".into()).model("local-qwen"))
     .await?;
 
-println!("{} via {} (cached: {})", answer.text, answer.provider, answer.cached);
+println!("{} via {} — ${:.6}", answer.text, answer.provider, answer.cost.total_usd);
 # Ok(()) }
 ```
 
-Implementing a provider is deliberately small: give it a name, a list of models, a cost estimate, and one `complete` method. That keeps OpenAI-compatible APIs, Anthropic, vLLM, Ollama, and internal model endpoints equally possible.
+Enable the provider adapter in your application's dependency declaration:
+
+```toml
+adaptive-llm-gateway = { version = "0.1", features = ["openai-compatible"] }
+```
 
 ## HTTP API
 
-`POST /v1/chat/completions`
+The optional Axum server exposes the same completion object at `POST /v1/chat/completions`.
 
-```json
-{
-  "prompt": "Write a warm release note.",
-  "model": "default",
-  "max_tokens": 200,
-  "temperature": 0.7,
-  "embedding": [0.12, -0.38, 0.91]
-}
+```bash
+cargo run --features server
+curl -s http://127.0.0.1:3000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"Write a warm release note."}'
 ```
 
-Every response includes the routing decision and cache status, making it straightforward to emit metrics or build an internal cost dashboard.
-
-| Field | Meaning |
-| --- | --- |
-| `provider` | The provider which generated the response (or originally generated a cached response). |
-| `model` | The selected model. |
-| `cached` | Whether no provider call was made. |
-| `cache_kind` | `exact`, `semantic`, or `null`. |
-| `usage` | Prompt and completion token counts reported by the provider. |
+Alongside the response text, the JSON includes `usage`, `cost`, and `route` so a caller can persist or chart the same decision data shown by the CLI.
 
 ## How it works
 
-For each completion, the gateway follows a short, predictable path:
+For every prompt, the gateway:
 
-1. Create a stable cache key from the prompt and generation settings.
-2. Return an exact cache hit if one exists.
-3. If an embedding was supplied, return the closest semantic match above the threshold.
-4. Rank compatible providers by configured input-token cost.
-5. Call the best candidate and retry the next candidate only for retryable failures.
-6. Store the completed response for future exact and semantic lookups.
+1. Checks the exact cache.
+2. Checks the semantic cache when an embedding is supplied.
+3. Ranks compatible providers by estimated input-token cost.
+4. Calls the best route, falling through only after retryable failures.
+5. Records the response for future exact and semantic lookups.
 
-The included `InMemoryCache` makes the demo self-contained. The `Cache` trait is the production seam: back exact keys with Redis and `find_similar` with pgvector's cosine-distance query. The gateway does not own embedding generation, so you can use the embedding model and privacy boundary that fit your system.
+`InMemoryCache` keeps the demo self-contained. The `Cache` trait is the production seam: Redis is a natural exact-cache implementation, while pgvector can implement similarity search with cosine distance. The gateway intentionally leaves embedding generation to the application so its privacy boundary and embedding model stay under your control.
 
-## Roadmap
-
-This is a focused MVP, optimized for a credible local demo and a clean integration surface—not a claim that every provider integration is already production-ready.
+## Project status
 
 **Working now**
 
-- Cost-ordered provider selection and retryable fallback
+- Explainable CLI walkthrough with fallback, token counts, costs, and cache savings
+- OpenAI-compatible local/hosted provider adapter
 - Exact cache and in-memory semantic cosine search
-- Rust SDK surface and Axum demo API
-- Structured tracing hooks for provider, cache, and latency events
+- Cost-ordered routing with retryable fallback
+- Optional Axum API and structured tracing hooks
 
 **Next up**
 
-- Redis exact-cache adapter with TTL and namespacing
-- pgvector cache adapter and embedding-provider helpers
-- OpenAI, Anthropic, Ollama, and OpenAI-compatible provider crates
-- OpenTelemetry spans and Prometheus metrics
+- Redis cache adapter with TTL and namespacing
+- pgvector semantic-cache adapter and embedding helpers
 - Streaming responses, budgets, rate limits, and tenant-aware routing
+- OpenTelemetry spans and Prometheus metrics
 
 ## Development
 
 ```bash
 cargo fmt --check
-cargo test
+cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 ```
-
-This is a personal project. The roadmap is intentionally scoped around the parts that make it useful in real applications: local inference, reliable caching, and transparent routing decisions.
