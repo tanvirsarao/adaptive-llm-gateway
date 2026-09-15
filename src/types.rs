@@ -67,6 +67,8 @@ pub struct CostSummary {
 pub struct RouteTrace {
     /// `miss`, `exact`, or `semantic`.
     pub cache: String,
+    /// Cosine similarity for a semantic-cache hit.
+    pub semantic_similarity: Option<f32>,
     /// Cost-ranked provider options considered for this request.
     pub candidates: Vec<RouteCandidate>,
     /// Providers called in order; a cached response has no attempts.

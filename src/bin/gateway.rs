@@ -4,7 +4,7 @@ use adaptive_llm_gateway::{
 };
 use async_trait::async_trait;
 use clap::{Args, Parser, Subcommand};
-use std::sync::Arc;
+use std::{io::IsTerminal, sync::Arc};
 
 #[derive(Parser)]
 #[command(
@@ -121,13 +121,32 @@ async fn demo(prompt: String, local_fails: bool) -> Result<(), Box<dyn std::erro
         .provider(Arc::new(local))
         .provider(Arc::new(frontier))
         .build()?;
-    println!("\n  ADAPTIVE LLM GATEWAY  ·  demo\n");
-    let request = CompletionRequest::new(prompt);
+    let theme = Theme::detect();
+    println!(
+        "\n  {}  {}\n",
+        theme.brand("ADAPTIVE LLM GATEWAY"),
+        theme.muted("· demo")
+    );
+    let request = CompletionRequest::new(prompt.clone()).embedding(vec![0.12, -0.38, 0.91]);
     let first = gateway.complete(request.clone()).await?;
-    print_completion("FIRST REQUEST", &first);
-    println!("\n  Replaying the same request to show the cache…");
+    print_completion("FIRST REQUEST", &first, theme);
+    println!(
+        "\n  {}",
+        theme.muted("Replaying the same request to show the exact cache…")
+    );
     let replay = gateway.complete(request).await?;
-    print_completion("REPLAY", &replay);
+    print_completion("EXACT REPLAY", &replay, theme);
+    println!(
+        "\n  {}",
+        theme.muted("Trying a near-match prompt to show the semantic cache…")
+    );
+    let semantic = gateway
+        .complete(
+            CompletionRequest::new(format!("{prompt} Please keep it concise."))
+                .embedding(vec![0.12, -0.38, 0.91]),
+        )
+        .await?;
+    print_completion("SEMANTIC REPLAY", &semantic, theme);
     Ok(())
 }
 
@@ -145,17 +164,63 @@ async fn prompt(args: PromptArgs) -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
     let request = CompletionRequest::new(args.prompt).model(args.model);
     let first = gateway.complete(request.clone()).await?;
-    print_completion("LOCAL MODEL", &first);
+    let theme = Theme::detect();
+    print_completion("LOCAL MODEL", &first, theme);
     if args.replay {
         let replay = gateway.complete(request).await?;
-        print_completion("REPLAY", &replay);
+        print_completion("EXACT REPLAY", &replay, theme);
     }
     Ok(())
 }
 
-fn print_completion(label: &str, completion: &Completion) {
-    println!("\n  ── {label} ─────────────────────────────────────");
-    println!("  Cache     {}", completion.route.cache.to_uppercase());
+#[derive(Clone, Copy)]
+struct Theme {
+    color: bool,
+}
+impl Theme {
+    fn detect() -> Self {
+        Self {
+            color: std::io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none(),
+        }
+    }
+    fn paint(self, code: &str, value: impl std::fmt::Display) -> String {
+        if self.color {
+            format!("\x1b[{code}m{value}\x1b[0m")
+        } else {
+            value.to_string()
+        }
+    }
+    fn brand(self, value: impl std::fmt::Display) -> String {
+        self.paint("1;36", value)
+    }
+    fn muted(self, value: impl std::fmt::Display) -> String {
+        self.paint("2", value)
+    }
+    fn good(self, value: impl std::fmt::Display) -> String {
+        self.paint("1;32", value)
+    }
+    fn warn(self, value: impl std::fmt::Display) -> String {
+        self.paint("1;33", value)
+    }
+}
+
+fn print_completion(label: &str, completion: &Completion, theme: Theme) {
+    println!(
+        "\n  {}",
+        theme.brand(format!("── {label} ─────────────────────────────────────"))
+    );
+    let cache = completion.route.cache.to_uppercase();
+    let cache_detail = completion
+        .route
+        .semantic_similarity
+        .map(|score| format!(" (cosine {score:.3})"))
+        .unwrap_or_default();
+    let status = if completion.cached {
+        theme.good(format!("✓ {cache}{cache_detail}"))
+    } else {
+        theme.warn(format!("• {cache}"))
+    };
+    println!("  Cache     {status}");
     if !completion.route.candidates.is_empty() {
         println!("  Routes");
         for (index, candidate) in completion.route.candidates.iter().enumerate() {
@@ -170,7 +235,15 @@ fn print_completion(label: &str, completion: &Completion) {
         }
     }
     for attempt in &completion.route.attempts {
-        println!("  Attempt   {} → {}", attempt.provider, attempt.outcome);
+        let marker = if attempt.outcome == "selected" {
+            theme.good("✓")
+        } else {
+            theme.warn("↳")
+        };
+        println!(
+            "  Attempt   {marker} {} → {}",
+            attempt.provider, attempt.outcome
+        );
     }
     println!("  Response  {}", completion.text);
     println!(
@@ -180,9 +253,12 @@ fn print_completion(label: &str, completion: &Completion) {
     println!("  Cost      ${:.6} this request", completion.cost.total_usd);
     if completion.cost.avoided_usd > 0.0 {
         println!(
-            "  Saved     ${:.6} via {} cache",
-            completion.cost.avoided_usd,
-            completion.cache_kind.as_deref().unwrap_or("unknown")
+            "  Saved     {}",
+            theme.good(format!(
+                "${:.6} via {} cache",
+                completion.cost.avoided_usd,
+                completion.cache_kind.as_deref().unwrap_or("unknown")
+            ))
         );
     }
 }

@@ -108,6 +108,7 @@ impl Gateway {
                         };
                         hit.entry.completion.route = RouteTrace {
                             cache: "semantic".into(),
+                            semantic_similarity: Some(hit.similarity),
                             ..Default::default()
                         };
                         info!(cache = "semantic", similarity = hit.similarity, completion_id = %hit.entry.completion.id, "gateway cache hit");
@@ -172,6 +173,7 @@ impl Gateway {
                         },
                         route: RouteTrace {
                             cache: "miss".into(),
+                            semantic_similarity: None,
                             candidates: route_candidates,
                             attempts,
                         },
