@@ -17,13 +17,17 @@ mod gateway;
 #[cfg(feature = "openai-compatible")]
 mod openai_compatible;
 mod provider;
+#[cfg(feature = "redis-cache")]
+mod redis_cache;
 mod types;
 
-pub use cache::{Cache, CacheEntry, InMemoryCache, SemanticMatch};
+pub use cache::{Cache, CacheEntry, InMemoryCache, SemanticMatch, TieredCache};
 pub use gateway::{Gateway, GatewayBuilder, GatewayConfig};
 #[cfg(feature = "openai-compatible")]
 pub use openai_compatible::OpenAiCompatibleProvider;
 pub use provider::{LlmProvider, ProviderCompletion, ProviderError};
+#[cfg(feature = "redis-cache")]
+pub use redis_cache::RedisExactCache;
 pub use types::{
     Completion, CompletionRequest, CostSummary, GatewayError, ProviderAttempt, RouteCandidate,
     RouteTrace, Usage,

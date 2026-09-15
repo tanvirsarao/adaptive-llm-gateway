@@ -27,6 +27,7 @@ default = []
 server = ["dep:axum", "dep:tokio", "dep:tracing-subscriber"]
 openai-compatible = ["dep:reqwest"]
 cli = ["dep:clap", "dep:tokio", "openai-compatible"]
+redis-cache = ["dep:redis", "dep:tokio"]
 
 [dependencies]
 async-trait = "0.1"
@@ -40,6 +41,7 @@ tokio = { version = "1", optional = true, features = ["macros", "rt-multi-thread
 tracing-subscriber = { version = "0.3", optional = true }
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"], optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
+redis = { version = "0.32", features = ["tokio-comp", "connection-manager"], optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

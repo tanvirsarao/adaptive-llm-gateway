@@ -2,7 +2,7 @@ use crate::Completion;
 use async_trait::async_trait;
 use std::{collections::HashMap, sync::RwLock};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct CacheEntry {
     pub completion: Completion,
     pub embedding: Option<Vec<f32>>,
@@ -22,6 +22,42 @@ pub trait Cache: Send + Sync {
         embedding: &[f32],
         minimum_similarity: f32,
     ) -> Result<Option<SemanticMatch>, String>;
+}
+
+/// Combines independent persistent cache tiers behind the gateway's single
+/// cache contract. For example: Redis for exact keys and pgvector for semantic
+/// matches. Writes fan out so either tier can answer a later request.
+pub struct TieredCache {
+    exact: std::sync::Arc<dyn Cache>,
+    semantic: std::sync::Arc<dyn Cache>,
+}
+
+impl TieredCache {
+    pub fn new(exact: std::sync::Arc<dyn Cache>, semantic: std::sync::Arc<dyn Cache>) -> Self {
+        Self { exact, semantic }
+    }
+}
+
+#[async_trait]
+impl Cache for TieredCache {
+    async fn get_exact(&self, key: &str) -> Result<Option<CacheEntry>, String> {
+        self.exact.get_exact(key).await
+    }
+
+    async fn put_exact(&self, key: String, entry: CacheEntry) -> Result<(), String> {
+        self.exact.put_exact(key.clone(), entry.clone()).await?;
+        self.semantic.put_exact(key, entry).await
+    }
+
+    async fn find_similar(
+        &self,
+        embedding: &[f32],
+        minimum_similarity: f32,
+    ) -> Result<Option<SemanticMatch>, String> {
+        self.semantic
+            .find_similar(embedding, minimum_similarity)
+            .await
+    }
 }
 
 /// Development cache. In production implement [`Cache`] with Redis for exact keys
